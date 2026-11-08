@@ -1,0 +1,115 @@
+--- a/panelFamilies/IllogicalImpulseFamily.qml
++++ b/panelFamilies/IllogicalImpulseFamily.qml
+@@ -22,6 +22,8 @@
+ import qs.modules.ii.overlay
+ import qs.modules.ii.verticalBar
+ import qs.modules.ii.wallpaperSelector
++import qs.modules.island
++import qs.modules.island.monitor
+ 
+ Scope {
+     PanelLoader { extraCondition: !Config.options.bar.vertical; component: Bar {} }
+@@ -30,7 +32,7 @@
+     PanelLoader { extraCondition: Config.options.dock.enable; component: Dock {} }
+     PanelLoader { component: Lock {} }
+     PanelLoader { component: MediaControls {} }
+-    PanelLoader { component: NotificationPopup {} }
++    PanelLoader { extraCondition: !IslandConfig.enabled; component: NotificationPopup {} }
+     PanelLoader { component: OnScreenDisplay {} }
+     PanelLoader { component: OnScreenKeyboard {} }
+     PanelLoader { component: Overlay {} }
+@@ -44,4 +46,6 @@
+     PanelLoader { component: SidebarRight {} }
+     PanelLoader { extraCondition: Config.options.bar.vertical; component: VerticalBar {} }
+     PanelLoader { component: WallpaperSelector {} }
++    PanelLoader { extraCondition: IslandConfig.enabled; component: Island {} }
++    PanelLoader { extraCondition: IslandConfig.enabled; component: SystemMonitor {} }
+ }
+--- a/modules/ii/bar/BarContent.qml
++++ b/modules/ii/bar/BarContent.qml
+@@ -5,6 +5,8 @@
+ import Quickshell.Services.UPower
+ import qs
+ import qs.services
++import qs.modules.island
++import qs.modules.island.monitor
+ import qs.modules.common
+ import qs.modules.common.widgets
+ import qs.modules.common.functions
+@@ -63,7 +65,7 @@
+         onScrollUp: Brightness.increaseBrightness()
+         onMovedAway: GlobalStates.osdBrightnessOpen = false
+         onPressed: event => {
+-            if (event.button === Qt.LeftButton)
++            if (event.button === Qt.LeftButton && !IslandConfig.enabled)
+                 GlobalStates.sidebarLeftOpen = !GlobalStates.sidebarLeftOpen;
+         }
+ 
+@@ -84,13 +86,21 @@
+ 
+             LeftSidebarButton { // Left sidebar button
+                 id: leftSidebarButton
++                visible: !IslandConfig.enabled
+                 Layout.alignment: Qt.AlignVCenter
+                 Layout.leftMargin: Appearance.rounding.screenRounding
+                 colBackground: barLeftSideMouseArea.hovered ? Appearance.colors.colLayer1Hover : ColorUtils.transparentize(Appearance.colors.colLayer1Hover, 1)
+             }
+ 
++            MonitorButton { // System monitor (island setup), replaces the AI sidebar button
++                id: monitorButton
++                visible: IslandConfig.enabled
++                Layout.alignment: Qt.AlignVCenter
++                Layout.leftMargin: Appearance.rounding.screenRounding
++            }
++
+             ActiveWindow {
+-                Layout.leftMargin: 10 + (leftSidebarButton.visible ? 0 : Appearance.rounding.screenRounding)
++                Layout.leftMargin: 10 + ((leftSidebarButton.visible || monitorButton.visible) ? 0 : Appearance.rounding.screenRounding)
+                 Layout.rightMargin: Appearance.rounding.screenRounding
+                 Layout.fillWidth: true
+                 Layout.fillHeight: true
+@@ -105,12 +115,15 @@
+             top: parent.top
+             bottom: parent.bottom
+             horizontalCenter: parent.horizontalCenter
++            // Island setup: keep the workspaces exactly centred; the islands grow to the left.
++            horizontalCenterOffset: IslandConfig.enabled ? middleSection.width / 2 - (middleCenterGroup.x + middleCenterGroup.width / 2) : 0
+         }
+         spacing: 4
+ 
+         BarGroup {
+             id: leftCenterGroup
+             anchors.verticalCenter: parent.verticalCenter
++            visible: !IslandConfig.enabled // island replaces resources + media
+             implicitWidth: root.centerSideModuleWidth
+ 
+             Resources {
+@@ -124,6 +137,19 @@
+             }
+         }
+ 
++        IslandBarSlot { // DJ: music island, splits off the main one while music plays
++            anchors.verticalCenter: parent.verticalCenter
++            visible: IslandConfig.enabled
++            screenName: root.screen?.name ?? ""
++            role: "dj"
++        }
++
++        IslandBarSlot {
++            anchors.verticalCenter: parent.verticalCenter
++            visible: IslandConfig.enabled
++            screenName: root.screen?.name ?? ""
++        }
++
+         VerticalBarSeparator {
+             visible: Config.options?.bar.borderless
+         }
+@@ -332,7 +358,7 @@
+             // Weather
+             Loader {
+                 Layout.leftMargin: 4
+-                active: Config.options.bar.weather.enable
++                active: Config.options.bar.weather.enable && !IslandConfig.enabled // island's idle glance shows weather
+ 
+                 sourceComponent: BarGroup {
+                     WeatherBar {}

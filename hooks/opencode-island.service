@@ -1,0 +1,11 @@
+[Unit]
+Description=Forward OpenCode session state to the Dynamic Island
+After=graphical-session.target
+
+[Service]
+ExecStart=/usr/bin/python3 -I %h/.config/quickshell/ii-island/hooks/opencode-island-hook.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
