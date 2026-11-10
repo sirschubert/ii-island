@@ -4,11 +4,12 @@ import qs.modules.common
 import qs.modules.common.widgets
 import qs.services
 import qs.modules.island
+import "opencodeLight.js" as OpencodeLight
 
 // What the island shows while sitting in the bar. Priority:
 // flash > urgent activity (>= 50) > music > Claude > other activity > idle.
 // While music plays, Claude shows as the logo in place of the equaliser.
-// Right slot: Claude logo (spinning / waiting) or the real-audio equaliser.
+// Right slot: Claude logo (zooming / waiting) or the real-audio equaliser.
 Item {
     id: root
     property bool animate: true // live motion only on the focused screen (repaints cost CPU)
@@ -24,6 +25,8 @@ Item {
     readonly property bool opencodeWaiting: IslandState.opencodeWaiting
     readonly property bool hasMusic: allowMusic && (IslandState.playing || IslandState.musicRecent) && MprisController.activePlayer !== null && (MprisController.activeTrack?.title ?? "").length > 0
     readonly property bool opencode: !djPill && !claude && (IslandState.opencodeLive !== null || opencodeCelebrating)
+    readonly property bool opencodeWorking: opencode && IslandState.opencodeLive !== null && !opencodeWaiting
+    readonly property bool claudeWorking: claude && IslandState.live !== null && !waiting
     readonly property var act: djPill ? null : IslandState.topActivity
     readonly property string mode: djPill ? "music"
         : IslandState.flashItem ? "flash"
@@ -93,9 +96,11 @@ Item {
     }
 
     // Cheap animation clock (~8 fps) for the logo, pulsing dots and clocks.
+    // 15 fps only while an agent logo is moving: its light or zoom is too jumpy at 8.
     property int tick: 0
+    onNowChanged: if (root.opencodeWorking) opencodeSweep.requestPaint()
     Timer {
-        interval: 125
+        interval: ((root.opencodeWorking && root.mode === "opencode") || (root.claudeWorking && root.mode === "claude")) && root.animate ? 66 : 125
         repeat: true
         running: (root.claude || root.opencode || root.mode === "activity") && root.animate
         onTriggered: {
@@ -226,7 +231,7 @@ Item {
             Layout.fillWidth: true
             text: root.mode === "music"
                 ? (IslandState.lyricLine || (MprisController.activeTrack?.title ?? ""))
-                : (root.mode === "opencode" ? (root.opencodeWaiting ? "Opencode needs you" : "Building · " + root.clock())
+                : (root.mode === "opencode" ? (root.opencodeWaiting ? "OpenCode needs you" : "Building · " + root.clock())
                     : (root.waiting ? "Claude needs you" : "Working · " + root.clock()))
             elide: Text.ElideRight
             font.pixelSize: Appearance.font.pixelSize.small
@@ -260,7 +265,7 @@ Item {
                 }
             }
 
-            // Claude logo: spins while working, pulses while waiting for permission.
+            // Claude logo: zooms in and out while working, pulses while waiting for permission.
             Image {
                 id: claudeLogo
                 anchors.centerIn: parent
@@ -271,23 +276,51 @@ Item {
                 width: 19
                 height: 19
                 smooth: true
-                rotation: root.waiting ? 0 : (root.tick * 22.5) % 360
+                scale: root.claudeWorking ? 0.82 + 0.165 * (1 + Math.cos(root.now / 312)) : 1
                 opacity: root.waiting ? 0.55 + 0.45 * Math.abs(Math.cos(root.tick * 0.4)) : 1
             }
 
-            // Opencode logo: spins while working, pulses while waiting for permission.
+            // Official OpenCode logo at its smallest allowed size (16x20, 4 px stroke), which
+            // needs whole pixels to stay sharp. Pulses while waiting for permission.
             Image {
                 id: opencodeLogo
                 anchors.centerIn: parent
-                visible: root.opencode
+                visible: root.opencode && !root.opencodeWorking
                 source: Qt.resolvedUrl("opencode-logo.svg")
-                sourceSize.width: 40
-                sourceSize.height: 40
-                width: 19
-                height: 19
-                smooth: true
-                rotation: root.opencodeWaiting ? 0 : (root.tick * 22.5) % 360
+                sourceSize.width: 16
+                sourceSize.height: 20
+                width: 16
+                height: 20
                 opacity: root.opencodeWaiting ? 0.55 + 0.45 * Math.abs(Math.cos(root.tick * 0.4)) : 1
+            }
+
+            // While working: the same logo with the ring dimmed and a band of light sweeping round it.
+            Canvas {
+                id: opencodeSweep
+                anchors.centerIn: parent
+                width: 16
+                height: 20
+                visible: root.opencodeWorking
+                onVisibleChanged: if (visible) requestPaint()
+                onPaint: {
+                    const ctx = getContext("2d");
+                    ctx.reset();
+                    ctx.scale(width / 240, height / 300);
+                    ctx.fillStyle = "rgba(238, 238, 238, 0.28)";
+                    ctx.fillRect(60, 120, 120, 120);
+                    ctx.lineWidth = 60;
+                    ctx.strokeStyle = "#57535a";
+                    ctx.strokeRect(30, 30, 180, 240);
+                    ctx.strokeStyle = "#5db4e0";
+                    for (const segment of OpencodeLight.sweep((root.now % 1600) / 1600)) {
+                        ctx.globalAlpha = segment.alpha;
+                        ctx.beginPath();
+                        ctx.moveTo(segment.points[0][0], segment.points[0][1]);
+                        for (let i = 1; i < segment.points.length; i++)
+                            ctx.lineTo(segment.points[i][0], segment.points[i][1]);
+                        ctx.stroke();
+                    }
+                }
             }
             // "?" while waiting, otherwise the number of sessions when more than one.
             Rectangle {
