@@ -94,13 +94,13 @@ Singleton {
     // try to focus the originating app window before discarding.
     function _focusAppWindow(appName: string): void {
         if (!appName || appName.length < 2) return;
-        // Hyprland match is regex-based on class. Many apps report "Discord" but the
-        // actual window class is "discord", so try both raw and lowercase.
-        const escaped = appName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-        Quickshell.execDetached(["hyprctl", "dispatch", "focuswindow", "class:.*" + escaped + ".*"]);
-        // Also try lowercase variant (most Wayland classes are lowercase).
-        if (appName !== appName.toLowerCase())
-            Quickshell.execDetached(["hyprctl", "dispatch", "focuswindow", "class:.*" + appName.toLowerCase() + ".*"]);
+        // Many apps report "Discord" but the window class is "discord", so compare without case.
+        // Matched here and focused by address: Hyprland's dispatch runs Lua, and an app name
+        // comes from whichever program sent the notification, so it must never reach that string.
+        const name = appName.toLowerCase();
+        const win = Hyprland.toplevels.values.find(t => (t.wayland?.appId ?? "").toLowerCase().includes(name));
+        if (win)
+            root.focusWindow("address:0x" + win.address);
     }
 
     function activateNotification(nid: int, eventId: string): void {
@@ -118,9 +118,14 @@ Singleton {
         }
     }
 
+    // Only pass selectors built from Hyprland's own values (pid, address), never outside text.
+    function focusWindow(selector: string): void {
+        Hyprland.dispatch(`hl.dsp.focus({ window = "${selector}" })`);
+    }
+
     function focusPid(pid: int): void {
         if (pid > 0)
-            Quickshell.execDetached(["hyprctl", "dispatch", "focuswindow", "pid:" + pid]);
+            root.focusWindow("pid:" + pid);
     }
 
     function handleClaude(msg: var): void {

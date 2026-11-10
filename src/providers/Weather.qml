@@ -1,6 +1,7 @@
 pragma ComponentBehavior: Bound
 import QtQuick
 import qs.services
+import qs.modules.island
 
 // Pushes an info card when the sky turns wet (rain, thunder, snow).
 // Only the dry -> wet transition fires; a wet -> wet change stays silent.
