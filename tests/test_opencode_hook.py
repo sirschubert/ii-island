@@ -69,6 +69,67 @@ class TestRouting(unittest.TestCase):
         self.assertNotIn("session.text.delta", hook.subscribed_types())
 
 
+class TestSubagents(unittest.TestCase):
+    def setUp(self):
+        self.started = {}
+        self.family = hook.Family()
+        self.send("session.execution.started")
+        self.send("session.created", "c", parentID="s")
+
+    def send(self, kind, sid="s", **data):
+        return hook.event_to_payload({"type": kind, "data": {"sessionID": sid, **data}}, self.started, 1000, self.family)
+
+    def test_subagent_finishing_does_not_end_the_run(self):
+        self.assertIsNone(self.send("session.execution.succeeded", "c"))
+        self.assertIsNone(self.send("session.execution.failed", "c", error={"message": "x"}))
+        self.assertIsNone(self.send("session.execution.interrupted", "c", reason="user"))
+        self.assertIn("s", self.started)
+
+    def test_parent_finishing_still_stops(self):
+        self.assertEqual(self.send("session.execution.succeeded")["event"], "stop")
+
+    def test_subagent_start_is_silent(self):
+        self.assertIsNone(self.send("session.execution.started", "c"))
+
+    def test_subagent_tool_keeps_the_parent_alive(self):
+        payload = self.send("session.tool.input.started", "c", name="bash")
+        self.assertEqual((payload["event"], payload["sessionId"]), ("tool", "s"))
+
+    def test_subagent_permission_shows_on_the_parent(self):
+        asked = self.send("permission.asked", "c")
+        replied = self.send("permission.replied", "c", reply="once")
+        self.assertEqual((asked["event"], asked["sessionId"]), ("perm", "s"))
+        self.assertEqual((replied["event"], replied["sessionId"]), ("start", "s"))
+
+    def test_other_subagent_tool_does_not_hide_an_open_permission(self):
+        self.send("session.created", "d", parentID="s")
+        self.send("permission.asked", "c")
+        self.assertIsNone(self.send("session.tool.input.started", "d", name="bash"))
+        self.send("permission.replied", "c", reply="once")
+        self.assertIsNotNone(self.send("session.tool.input.started", "d", name="bash"))
+
+    def test_nested_subagent_maps_to_the_top_session(self):
+        self.send("session.created", "g", parentID="c")
+        self.assertEqual(self.send("permission.asked", "g")["sessionId"], "s")
+
+    def test_v1_created_event_with_info_is_understood(self):
+        self.send("session.created", "v", info={"parentID": "s"})
+        self.assertIsNone(self.send("session.execution.succeeded", "v"))
+
+    def test_reply_after_the_parent_ended_is_dropped(self):
+        self.send("session.execution.interrupted", reason="user")
+        self.assertIsNone(self.send("permission.replied", "c", reply="reject"))
+
+    def test_session_without_parent_is_a_normal_run(self):
+        self.assertIsNone(self.send("session.created", "n"))
+        self.assertEqual(self.send("session.execution.started", "n")["sessionId"], "n")
+        self.assertEqual(self.send("session.execution.succeeded", "n")["event"], "stop")
+
+    def test_deleted_subagent_is_forgotten(self):
+        self.assertIsNone(self.send("session.deleted", "c"))
+        self.assertNotIn("c", self.family.parents)
+
+
 class TestSseLine(unittest.TestCase):
     def test_data_line(self):
         self.assertEqual(hook.parse_sse_line(b'data: {"type":"x"}'), {"type": "x"})

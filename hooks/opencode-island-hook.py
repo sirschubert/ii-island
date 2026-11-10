@@ -23,6 +23,7 @@ RETRY_SECONDS = 3
 
 # OpenCode 2.x event type -> island event.
 ROUTES = {
+    "session.created": "created",  # only read to learn which sessions are subagents
     "session.execution.started": "start",
     "session.tool.input.started": "tool",
     "permission.asked": "perm",
@@ -73,11 +74,39 @@ def error_summary(error):
     return str(message or "Opencode run failed")[:100]
 
 
-def event_to_payload(event, started, now_ms):
+class Family:
+    """OpenCode runs each subagent as its own session with a parent."""
+
+    def __init__(self):
+        self.parents = {}  # subagent session -> parent session
+        self.asking = set()  # top-level sessions with a permission prompt open
+
+    def top(self, sid):
+        seen = set()
+        while sid in self.parents and sid not in seen:
+            seen.add(sid)
+            sid = self.parents[sid]
+        return sid
+
+
+def subagent_reaches_island(island_event, kind, top, started, family):
+    """A subagent is part of its parent's run: only what the user should see gets through."""
+    if island_event == "perm":
+        return True
+    if top not in started:  # the run already ended; a late event must not bring it back
+        return False
+    if kind == "permission.replied":
+        return True
+    # Its tool calls keep the run from going stale, but must not hide an open prompt.
+    return island_event == "tool" and top not in family.asking
+
+
+def event_to_payload(event, started, now_ms, family=None):
     """Map one OpenCode event to an island payload, or None to ignore it.
 
-    `started` maps session id -> start time and is updated here.
+    `started` maps session id -> start time and `family` tracks subagents; both are updated here.
     """
+    family = family if family is not None else Family()
     kind = event.get("type")
     island_event = ROUTES.get(kind)
     data = event.get("data")
@@ -87,6 +116,25 @@ def event_to_payload(event, started, now_ms):
     if not sid:
         return None
 
+    if island_event == "created":
+        info = data.get("info")  # older event shape
+        parent = data.get("parentID") or (info.get("parentID") if isinstance(info, dict) else None)
+        if parent:
+            family.parents[sid] = parent
+        return None
+
+    top = family.top(sid)
+    if top != sid:
+        if kind == "session.deleted":
+            family.parents.pop(sid, None)
+        if not subagent_reaches_island(island_event, kind, top, started, family):
+            return None
+        sid = top
+
+    if island_event == "perm":
+        family.asking.add(sid)
+    elif kind == "permission.replied" or island_event in ("stop", "end"):
+        family.asking.discard(sid)
     if island_event in ("start", "tool", "perm"):
         started.setdefault(sid, now_ms)
     payload = {
@@ -124,7 +172,7 @@ def send_island(payload):
         pass
 
 
-def watch_once(requests, url, password, started):
+def watch_once(requests, url, password, started, family):
     """Follow the stream until the connection ends."""
     token = base64.b64encode(f"opencode:{password}".encode()).decode()
     headers = {"Authorization": f"Basic {token}", "Accept": "text/event-stream"}
@@ -143,7 +191,7 @@ def watch_once(requests, url, password, started):
                 continue
             if os.environ.get("CLAUDE_ISLAND_DEBUG"):
                 log(f"event {event.get('type')}")
-            payload = event_to_payload(event, started, int(time.time() * 1000))
+            payload = event_to_payload(event, started, int(time.time() * 1000), family)
             if payload is not None:
                 send_island(payload)
 
@@ -156,12 +204,13 @@ def main():
         return 1
 
     started = {}
+    family = Family()
     while True:
         # Re-read every time: OpenCode writes new credentials when its server restarts.
         service = load_service(service_path(os.environ), os.environ)
         if service is not None:
             try:
-                watch_once(requests, service[0], service[1], started)
+                watch_once(requests, service[0], service[1], started, family)
             except (requests.exceptions.RequestException, OSError) as e:
                 log(f"connection lost: {e}")
         time.sleep(RETRY_SECONDS)
