@@ -247,8 +247,11 @@ Item {
             implicitHeight: 22
 
             // Equaliser (real audio), tinted with the album colour.
+            // Fixed height (the tallest a bar gets): sized to its bars, the centred row would
+            // shift up and down with them.
             Row {
                 anchors.centerIn: parent
+                height: 14
                 spacing: 2
                 visible: !root.claude && !root.opencode
                 Repeater {
