@@ -54,6 +54,10 @@ Item {
         property string icon: ""
         property string text: ""
         property var graph: []
+        readonly property real iconSpace: icon !== "" ? 25 : 0
+        // Only the newest bars that fit beside the text (3 px each); under 4 isn't a graph.
+        readonly property int bars: Math.min(graph.length, Math.floor((root.width - iconSpace - label.implicitWidth - spacing + 1) / 3))
+        readonly property var shownGraph: bars >= 4 ? graph.slice(-bars) : []
         width: root.center ? implicitWidth : root.width
         x: root.center ? (root.width - implicitWidth) / 2 : 0
         spacing: 7
@@ -66,8 +70,10 @@ Item {
             color: root.iconColor
         }
         StyledText {
+            id: label
             anchors.verticalCenter: parent.verticalCenter
-            width: root.center ? implicitWidth : Math.max(0, parent.width - (parent.icon !== "" ? 25 : 0) - (slotRow.graph.length > 0 ? 40 : 0))
+            // Centred rows overflow on both sides, so very long text elides instead of cutting the icon.
+            width: root.center ? Math.min(implicitWidth, Math.max(0, root.width - slotRow.iconSpace)) : Math.max(0, parent.width - slotRow.iconSpace - (slotRow.shownGraph.length > 0 ? 40 : 0))
             text: parent.text
             elide: Text.ElideRight
             font.pixelSize: root.pixelSize
@@ -75,11 +81,11 @@ Item {
         }
         Row {
             anchors.verticalCenter: parent.verticalCenter
-            visible: slotRow.graph.length > 0
+            visible: slotRow.shownGraph.length > 0
             spacing: 1
             height: 14
             Repeater {
-                model: slotRow.graph
+                model: slotRow.shownGraph
                 Rectangle {
                     required property real modelData
                     anchors.bottom: parent.bottom
